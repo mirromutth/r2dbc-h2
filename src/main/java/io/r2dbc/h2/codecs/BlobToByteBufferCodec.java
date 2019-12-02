@@ -16,19 +16,12 @@
 
 package io.r2dbc.h2.codecs;
 
-import java.io.InputStream;
-import java.io.SequenceInputStream;
-import java.nio.ByteBuffer;
-import java.util.Enumeration;
-import java.util.Iterator;
-
 import io.r2dbc.h2.client.Client;
 import io.r2dbc.h2.util.Assert;
-import io.r2dbc.spi.Blob;
 import org.h2.value.Value;
 import org.h2.value.ValueNull;
-import reactor.core.publisher.Flux;
-import reactor.core.scheduler.Schedulers;
+
+import java.nio.ByteBuffer;
 
 final class BlobToByteBufferCodec extends AbstractCodec<ByteBuffer> {
 
@@ -50,53 +43,18 @@ final class BlobToByteBufferCodec extends AbstractCodec<ByteBuffer> {
 			return null;
 		}
 
-		return new ValueLobBlob(value).stream()
-			.reduce((byteBuffer, byteBuffer2) -> {
-				ByteBuffer combined = ByteBuffer.allocate(byteBuffer.limit() + byteBuffer2.limit());
-				combined.put(byteBuffer);
-				combined.put(byteBuffer2);
-				return combined;
-			})
-			.block();
+		return ByteBuffer.wrap(value.getBytes());
 	}
 
 	@Override
 	Value doEncode(ByteBuffer value) {
 		Assert.requireNonNull(value, "value must not be null");
 
-		Value blob = this.client.getSession().getDataHandler().getLobStorage().createBlob(
-			new SequenceInputStream(
-				new BlobInputStreamEnumeration(value)), -1);
+		Value blob = this.client.getSession().getDataHandler().getLobStorage()
+			.createBlob(new ByteBufferInputStream(value), value.remaining());
 
 		this.client.getSession().addTemporaryLob(blob);
 
 		return blob;
-	}
-
-	/**
-	 * Converts a {@link Flux} of {@link Blob}s into an {@link Enumeration} of {@link InputStream}s.
-	 */
-	private final class BlobInputStreamEnumeration implements Enumeration<InputStream> {
-
-		private final Iterator<ByteBufferInputStream> inputStreams;
-
-		BlobInputStreamEnumeration(ByteBuffer value) {
-			this.inputStreams = Flux.just(value)
-				.map(ByteBufferInputStream::new)
-				.subscribeOn(Schedulers.elastic())
-				.cancelOn(Schedulers.elastic())
-				.toIterable()
-				.iterator();
-		}
-
-		@Override
-		public boolean hasMoreElements() {
-			return inputStreams.hasNext();
-		}
-
-		@Override
-		public InputStream nextElement() {
-			return inputStreams.next();
-		}
 	}
 }
